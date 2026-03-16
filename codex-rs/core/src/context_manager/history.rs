@@ -36,10 +36,31 @@ pub(crate) struct ContextManager {
     reference_turn_context_state: ReferenceTurnContextState,
 }
 
+/// Session-owned bookkeeping for turn-context state that survives history replay,
+/// rollback, and compaction.
+///
+/// This intentionally tracks both the latest real turn context we know about and the
+/// model-visible reference baseline, because those diverge when compaction hides the
+/// baseline without erasing the last real turn's settings.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ReferenceTurnContextState {
+    /// The most recent real turn context we reconstructed or recorded, even if a later
+    /// compaction means the model can no longer rely on it as the active baseline.
+    ///
+    /// This drives `previous_turn_settings()` and rollback UI metadata, which intentionally
+    /// survive compaction until a newer real turn replaces them.
     latest_turn_context_item: Option<TurnContextItem>,
+    /// The last turn context item that established the model's reference baseline.
+    ///
+    /// Unlike `latest_turn_context_item`, this is only model-visible when
+    /// `compacted_since_model_saw_reference_turn_context` is false.
     reference_turn_context_item: Option<TurnContextItem>,
+    /// Whether compaction has crossed the current reference baseline without a later
+    /// reinjection or real turn context re-establishing it.
+    ///
+    /// When this is true, `reference_context_item()` must return `None` even if
+    /// `reference_turn_context_item` still retains the last stored baseline for replay or
+    /// rollback bookkeeping.
     compacted_since_model_saw_reference_turn_context: bool,
 }
 
