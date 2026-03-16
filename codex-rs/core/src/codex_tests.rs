@@ -134,10 +134,10 @@ async fn seed_previous_turn_settings(
     previous_turn_settings: PreviousTurnSettings,
 ) {
     session
-        .set_latest_turn_context_item(Some(turn_context_item_with_previous_turn_settings(
+        .record_regular_turn_context(turn_context_item_with_previous_turn_settings(
             turn_context,
             previous_turn_settings,
-        )))
+        ))
         .await;
 }
 
@@ -3410,7 +3410,7 @@ async fn record_model_warning_appends_user_message() {
 #[tokio::test]
 async fn spawn_task_does_not_update_previous_turn_settings_for_non_run_turn_tasks() {
     let (sess, tc, _rx) = make_session_and_context_with_rx().await;
-    sess.set_latest_turn_context_item(None).await;
+    sess.reset_reference_turn_context_state().await;
     let input = vec![UserInput::Text {
         text: "hello".to_string(),
         text_elements: Vec::new(),

@@ -97,11 +97,6 @@ impl SessionState {
         self.history.set_token_info(info);
     }
 
-    #[cfg(test)]
-    pub(crate) fn set_latest_turn_context_item(&mut self, item: Option<TurnContextItem>) {
-        self.history.set_latest_turn_context_item(item);
-    }
-
     pub(crate) fn record_regular_turn_context(&mut self, turn_context_item: TurnContextItem) {
         self.history.record_regular_turn_context(turn_context_item);
     }

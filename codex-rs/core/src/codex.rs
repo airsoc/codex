@@ -41,6 +41,7 @@ use crate::realtime_conversation::handle_close as handle_realtime_conversation_c
 use crate::realtime_conversation::handle_start as handle_realtime_conversation_start;
 use crate::realtime_conversation::handle_text as handle_realtime_conversation_text;
 use crate::rollout::session_index;
+use crate::skills::render_skills_section;
 use crate::stream_events_utils::HandleOutputCtx;
 use crate::stream_events_utils::handle_non_tool_response_item;
 use crate::stream_events_utils::handle_output_item_done;
@@ -221,6 +222,7 @@ use crate::mentions::collect_tool_mentions_from_messages;
 use crate::network_policy_decision::execpolicy_network_rule_amendment;
 use crate::plugins::PluginsManager;
 use crate::plugins::build_plugin_injections;
+use crate::plugins::render_plugins_section;
 use crate::project_doc::get_user_instructions;
 use crate::protocol::AgentMessageContentDeltaEvent;
 use crate::protocol::AgentReasoningSectionBreakEvent;
@@ -423,7 +425,6 @@ impl Codex {
         let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
         let (tx_event, rx_event) = async_channel::unbounded();
 
-        let _loaded_plugins = plugins_manager.plugins_for_config(&config);
         let loaded_skills = skills_manager.skills_for_config(&config);
 
         for err in &loaded_skills.errors {
@@ -2167,18 +2168,17 @@ impl Session {
         })
     }
 
-    pub(crate) async fn latest_turn_context_item(&self) -> Option<TurnContextItem> {
+    async fn latest_turn_context_item(&self) -> Option<TurnContextItem> {
         let state = self.state.lock().await;
         state.latest_turn_context_item()
     }
 
-    #[cfg(test)]
-    pub(crate) async fn set_latest_turn_context_item(&self, item: Option<TurnContextItem>) {
+    async fn record_regular_turn_context(&self, turn_context_item: TurnContextItem) {
         let mut state = self.state.lock().await;
-        state.set_latest_turn_context_item(item);
+        state.record_regular_turn_context(turn_context_item);
     }
 
-    pub(crate) async fn reset_reference_turn_context_state(&self) {
+    async fn reset_reference_turn_context_state(&self) {
         let mut state = self.state.lock().await;
         state.reset_reference_turn_context_state();
     }
@@ -3496,6 +3496,21 @@ impl Session {
         if turn_context.apps_enabled() {
             developer_sections.push(render_apps_section());
         }
+        let implicit_skills = turn_context
+            .turn_skills
+            .outcome
+            .allowed_skills_for_implicit_invocation();
+        if let Some(skills_section) = render_skills_section(&implicit_skills) {
+            developer_sections.push(skills_section);
+        }
+        let loaded_plugins = self
+            .services
+            .plugins_manager
+            .plugins_for_config(&turn_context.config);
+        if let Some(plugin_section) = render_plugins_section(loaded_plugins.capability_summaries())
+        {
+            developer_sections.push(plugin_section);
+        }
         if turn_context.features.enabled(Feature::CodexGitCommit)
             && let Some(commit_message_instruction) = commit_message_trailer_instruction(
                 turn_context.config.commit_attribution.as_deref(),
@@ -3612,8 +3627,7 @@ impl Session {
         // Advance the in-memory turn-context tracker even when this turn emitted no model-visible
         // context items. Regular turns become both the latest turn-settings source and the active
         // model-visible reference baseline for subsequent diffing.
-        let mut state = self.state.lock().await;
-        state.record_regular_turn_context(turn_context_item);
+        self.record_regular_turn_context(turn_context_item).await;
     }
 
     pub(crate) async fn update_token_usage_info(
@@ -6208,9 +6222,25 @@ fn build_prompt(
     turn_context: &TurnContext,
     base_instructions: BaseInstructions,
 ) -> Prompt {
+    let deferred_dynamic_tools = turn_context
+        .dynamic_tools
+        .iter()
+        .filter(|tool| tool.defer_loading)
+        .map(|tool| tool.name.as_str())
+        .collect::<HashSet<_>>();
+    let tools = if deferred_dynamic_tools.is_empty() {
+        router.model_visible_specs()
+    } else {
+        router
+            .model_visible_specs()
+            .into_iter()
+            .filter(|spec| !deferred_dynamic_tools.contains(spec.name()))
+            .collect()
+    };
+
     Prompt {
         input,
-        tools: router.model_visible_specs(),
+        tools,
         parallel_tool_calls: turn_context.model_info.supports_parallel_tool_calls,
         base_instructions,
         personality: turn_context.personality,
